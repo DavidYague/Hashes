@@ -1,0 +1,134 @@
+import cv2
+import numpy as np
+import pywt
+from sklearn.decomposition import NMF
+from matplotlib import pyplot as plt
+
+def compare_images_advanced(image1_path, image2_path):
+    # Cargar las imágenes en escala de grises
+    img1 = cv2.imread(image1_path, cv2.IMREAD_GRAYSCALE)
+    img2 = cv2.imread(image2_path, cv2.IMREAD_GRAYSCALE)
+
+    if img1 is None or img2 is None:
+        print("Error al cargar una o ambas imágenes.")
+        return
+
+    # Asegurar que las dimensiones de ambas imágenes sean iguales
+    if img1.shape != img2.shape:
+        print("Las imágenes tienen diferentes dimensiones. Se ajustarán automáticamente.")
+        img2 = cv2.resize(img2, (img1.shape[1], img1.shape[0]))  # Redimensionar img2 para que coincida con img1
+
+    # Asegurar de que ambas imágenes sean uint8
+    img1 = np.uint8(img1)
+    img2 = np.uint8(img2)
+
+    # **1. DCT (Discrete Cosine Transform)**
+    def apply_dct(image):
+        dct = cv2.dct(np.float32(image))  # Aplicar la transformación DCT
+        normalized = cv2.normalize(dct, None, 0, 255, cv2.NORM_MINMAX)  # Normalizar para mejor visualización
+        return np.uint8(normalized)
+
+    dct1 = apply_dct(img1)
+    dct2 = apply_dct(img2)
+    dct_diff = cv2.absdiff(dct1, dct2)
+
+    # **2. DWT (Discrete Wavelet Transform)**
+    def apply_dwt(image):
+        coeffs = pywt.dwt2(image, 'haar')  # Descomposición en dos niveles (Aproximación y Detalles)
+        cA, _ = coeffs
+        # Redimensionar salida a dimensiones originales
+        cA_resized = cv2.resize(cA, (img1.shape[1], img1.shape[0]))
+        return np.uint8(cA_resized)
+
+    dwt1 = apply_dwt(img1)
+    dwt2 = apply_dwt(img2)
+    dwt_diff = cv2.absdiff(dwt1, dwt2)
+
+    # **3. SVD (Singular Value Decomposition)**
+    def apply_svd(image):
+        U, S, Vt = np.linalg.svd(np.float32(image), full_matrices=False)
+        S_resized = cv2.resize(S.reshape(1, -1), (img1.shape[1], img1.shape[0]))  # Redimensionar salida
+        return np.uint8(S_resized)
+
+    svd1 = apply_svd(img1)
+    svd2 = apply_svd(img2)
+    svd_diff = cv2.absdiff(svd1, svd2)
+
+    # **4. NMF (Non-Negative Matrix Factorization)**
+    def apply_nmf(image, components=5):
+        model = NMF(n_components=components, init='random', random_state=42, max_iter=500)
+        W = model.fit_transform(image)
+        H = model.components_
+        nmf_reconstructed = W @ H  # Reconstrucción aproximada
+        nmf_resized = cv2.resize(nmf_reconstructed, (img1.shape[1], img1.shape[0]))  # Redimensionar salida
+        return np.uint8(nmf_resized)
+
+    nmf1 = apply_nmf(img1)
+    nmf2 = apply_nmf(img2)
+    nmf_diff = cv2.absdiff(nmf1, nmf2)
+
+    # **Combinación de resultados (DCT, DWT, NMF)**
+    combined_diff = cv2.bitwise_or(dct_diff, dwt_diff)
+    combined_diff = cv2.bitwise_or(combined_diff, nmf_diff)
+
+    # Umbralizar diferencias combinadas
+    _, combined_thresh = cv2.threshold(combined_diff, 30, 255, cv2.THRESH_BINARY)
+
+    # Encontrar contornos en la diferencia combinada
+    contours, _ = cv2.findContours(combined_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Crear una copia de la imagen original para visualizar las diferencias
+    output_img = cv2.cvtColor(img1, cv2.COLOR_GRAY2BGR)
+    annotated_img = output_img.copy()
+
+    # Dibujar los contornos y guardar las coordenadas
+    differences = []
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        if w > 5 and h > 5:  # Ignorar regiones muy pequeñas
+            differences.append((x, y, w, h))
+            cv2.rectangle(annotated_img, (x, y), (x + w, y + h), (0, 0, 255), 2)  # Dibujar en rojo
+
+    # **Visualizar resultados**
+    plt.figure(figsize=(15, 10))
+
+    plt.subplot(2, 3, 1)
+    plt.title("Imagen Original")
+    plt.imshow(img1, cmap="gray")
+
+    plt.subplot(2, 3, 2)
+    plt.title("Diferencias en DCT")
+    plt.imshow(dct_diff, cmap="gray")
+
+    plt.subplot(2, 3, 3)
+    plt.title("Diferencias en DWT")
+    plt.imshow(dwt_diff, cmap="gray")
+
+    plt.subplot(2, 3, 4)
+    plt.title("Diferencias en SVD")
+    plt.imshow(svd_diff, cmap="gray")
+
+    plt.subplot(2, 3, 5)
+    plt.title("Diferencias en NMF")
+    plt.imshow(nmf_diff, cmap="gray")
+
+    plt.subplot(2, 3, 6)
+    plt.title("Anotaciones en la Imagen")
+    plt.imshow(cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB))
+
+    plt.tight_layout()
+    plt.show()
+
+    # **Imprimir un informe con las coordenadas de las diferencias**
+    if differences:
+        print(f"Se detectaron {len(differences)} regiones con diferencias significativas:")
+        for i, (x, y, w, h) in enumerate(differences):
+            print(f"Región {i + 1}: Coordenadas (x={x}, y={y}), Ancho={w}, Alto={h}")
+    else:
+        print("No se detectaron diferencias significativas.")
+
+# Rutas a las imágenes
+compare_images_advanced(
+    'C:/Users/David Yague/Desktop/Automatizaciones/imagen_original.jpg', 
+    'C:/Users/David Yague/Desktop/Automatizaciones/imagen_modificada.jpg'
+)
